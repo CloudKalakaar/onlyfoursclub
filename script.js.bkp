@@ -1,0 +1,474 @@
+// Game State
+let state = {
+    mode: null,
+    players: [],
+    teams: { A: [], B: [] },
+    scores: {},
+    overs: 1,
+    outRule: 'deduct',
+    currentInningIndex: 0,
+    currentBatterIndex: 0,
+    ballsBowled: 0,
+    currentScore: 0
+};
+ 
+let isNoBallActive = false;
+let tossWinnerData = { winnerName: null, teamA: [], teamB: [] };
+ 
+// Track match stats for the session to push to backend later
+let currentMatchStats = {}; 
+ 
+// Undo Stack (limit 6)
+let undoHistory = [];
+ 
+// UI Navigation
+function showView(viewId) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById(viewId).classList.add('active');
+}
+ 
+async function saveState() {
+    try {
+        await fetch('/api/match', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(state)
+        });
+    } catch (e) { console.error("Failed to save match state", e); }
+}
+ 
+// Login & Auth
+async function login() {
+    const user = document.getElementById('username').value;
+    const pass = document.getElementById('password').value;
+    const errorText = document.getElementById('login-error');
+    errorText.innerText = "Logging in...";
+    
+    try {
+        const res = await fetch('/api/login', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: user, password: pass })
+        });
+        if (res.ok) {
+            errorText.innerText = "";
+            document.getElementById('main-nav').style.display = 'flex';
+            showView('type-view');
+        } else {
+            errorText.innerText = "Invalid credentials!";
+        }
+    } catch (err) {
+        errorText.innerText = "Server unreachable. Is Flask running?";
+    }
+}
+ 
+// Player List Management
+function addPlayer(listId, inputId) {
+    const name = document.getElementById(inputId).value.trim();
+    if (!name) return;
+    const ul = document.getElementById(listId);
+    
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${name}</span> <button class="remove-btn" onclick="this.parentElement.remove()">❌</button>`;
+    ul.appendChild(li);
+    document.getElementById(inputId).value = '';
+}
+ 
+function getListItems(listId) {
+    return Array.from(document.getElementById(listId).children).map(li => li.querySelector('span').innerText);
+}
+ 
+// Load Previous Squad
+async function loadLastSquad() {
+    try {
+        let res = await fetch('/api/squad');
+        let squad = await res.json();
+        
+        if (!squad || !squad.mode) return alert("No previous squad found!");
+        
+        // Auto fill inputs based on mode
+        if (squad.mode === 'single') {
+            let ul = document.getElementById('sp-list');
+            ul.innerHTML = '';
+            squad.players.forEach(p => {
+                let li = document.createElement('li');
+                li.innerHTML = `<span>${p}</span> <button class="remove-btn" onclick="this.parentElement.remove()">❌</button>`;
+                ul.appendChild(li);
+            });
+            showView('single-setup-view');
+        } else {
+            let ula = document.getElementById('ta-list');
+            let ulb = document.getElementById('tb-list');
+            ula.innerHTML = ''; ulb.innerHTML = '';
+            
+            // Re-flatten the teams to put back into setup
+            let ta = squad.teams[1].name === 'Team A' ? squad.teams[1].players : squad.teams[2].players;
+            let tb = squad.teams[1].name === 'Team B' ? squad.teams[1].players : squad.teams[2].players;
+ 
+            ta.forEach(p => { ula.innerHTML += `<li><span>${p}</span> <button class="remove-btn" onclick="this.parentElement.remove()">❌</button></li>`; });
+            tb.forEach(p => { ulb.innerHTML += `<li><span>${p}</span> <button class="remove-btn" onclick="this.parentElement.remove()">❌</button></li>`; });
+            showView('multi-setup-view');
+        }
+    } catch (e) { console.error("Failed to load squad", e); }
+}
+ 
+// Stats Viewer
+async function loadStats() {
+    try {
+        let res = await fetch('/api/stats');
+        let stats = await res.json();
+        let tbody = document.getElementById('stats-body');
+        tbody.innerHTML = '';
+        
+        for (const [player, data] of Object.entries(stats)) {
+            tbody.innerHTML += `<tr><td>${player}</td><td>${data.matches}</td><td>${data.runs}</td><td>${data.outs}</td></tr>`;
+        }
+        showView('stats-view');
+    } catch(e) { console.error("Error loading stats", e); }
+}
+ 
+async function clearStats() {
+    if(confirm("Are you sure you want to completely erase career stats?")) {
+        await fetch('/api/stats', { method: 'DELETE' });
+        loadStats();
+    }
+}
+ 
+// Undo Stack Logic (Store copy of state BEFORE action)
+function pushUndoState() {
+    if (undoHistory.length >= 6) undoHistory.shift(); // Keep max 6 items
+    // Deep copy current state
+    undoHistory.push({
+        stateStr: JSON.stringify(state),
+        noBall: isNoBallActive
+    });
+}
+ 
+function undoLastBall() {
+    if (undoHistory.length === 0) return alert("Nothing to undo!");
+    
+    let last = undoHistory.pop();
+    state = JSON.parse(last.stateStr); // Restore exact state
+    
+    // Restore UI variables
+    isNoBallActive = last.noBall;
+    let nbBtn = document.getElementById('btn-noball');
+    if (isNoBallActive) {
+        nbBtn.classList.add('btn-active'); nbBtn.innerText = 'NB (On)';
+    } else {
+        nbBtn.classList.remove('btn-active'); nbBtn.innerText = 'NB';
+    }
+    
+    updateScoreboard();
+    saveState();
+}
+ 
+// --- SINGLE PLAYER LOGIC ---
+function startSinglePlayer() {
+    let pList = getListItems('sp-list');
+    if (pList.length < 2) return alert("At least 2 players required!");
+    
+    state.players = pList.sort(() => Math.random() - 0.5);
+    state.overs = parseInt(document.getElementById('sp-overs').value) || 1;
+    state.outRule = document.getElementById('sp-rule').value;
+    state.mode = 'single';
+    
+    state.players.forEach(p => state.scores[p] = 0);
+    
+    // Save squad
+    fetch('/api/squad', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode: 'single', players: state.players}) });
+ 
+    alert(`Batting Order:\n${state.players.join('\n')}`);
+    undoHistory = []; // Reset undo
+    setupInning();
+}
+ 
+// --- MULTIPLAYER LOGIC (ANIMATED TOSS & CHOICE) ---
+function startMultiplayerToss() {
+    let ta = getListItems('ta-list');
+    let tb = getListItems('tb-list');
+    if (ta.length < 2 || tb.length < 2) return alert("At least 2 players per team required!");
+    
+    state.overs = parseInt(document.getElementById('mp-overs').value) || 1;
+    state.mode = 'multi';
+    state.outRule = 'deduct';
+    
+    tossWinnerData.teamA = ta;
+    tossWinnerData.teamB = tb;
+    
+    // Crypto Random Toss
+    let randomBuffer = new Uint32Array(1);
+    window.crypto.getRandomValues(randomBuffer);
+    let isTeamA = (randomBuffer[0] % 2 === 0);
+    tossWinnerData.winnerName = isTeamA ? 'A' : 'B';
+    
+    // Show Toss Modal & animate coin
+    document.getElementById('toss-title').innerText = "Flipping Coin...";
+    document.getElementById('toss-choices').style.display = 'none';
+    let coin = document.getElementById('coin');
+    
+    // Reset rotation, then spin to correct side
+    coin.style.transition = 'none';
+    coin.style.transform = 'rotateY(0deg)';
+    
+    setTimeout(() => {
+        coin.style.transition = 'transform 2s cubic-bezier(0.2, 0.8, 0.2, 1)';
+        // Base spins + final face (A is front 0deg, B is back 180deg)
+        let spins = 1800; 
+        coin.style.transform = `rotateY(${isTeamA ? spins : spins + 180}deg)`;
+        
+        // Show choice buttons after animation finishes
+        setTimeout(() => {
+            document.getElementById('toss-title').innerText = `Team ${tossWinnerData.winnerName} won the toss!`;
+            document.getElementById('toss-choices').style.display = 'block';
+        }, 2000);
+    }, 50);
+ 
+    document.getElementById('toss-modal').classList.add('active');
+}
+ 
+function handleTossChoice(choice) {
+    document.getElementById('toss-modal').classList.remove('active');
+    
+    let ta = tossWinnerData.teamA;
+    let tb = tossWinnerData.teamB;
+    let winner = tossWinnerData.winnerName;
+    
+    if (choice === 'bat') {
+        state.teams = winner === 'A' 
+            ? { 1: { name: 'Team A', players: ta }, 2: { name: 'Team B', players: tb } }
+            : { 1: { name: 'Team B', players: tb }, 2: { name: 'Team A', players: ta } };
+    } else {
+        state.teams = winner === 'A' 
+            ? { 1: { name: 'Team B', players: tb }, 2: { name: 'Team A', players: ta } }
+            : { 1: { name: 'Team A', players: ta }, 2: { name: 'Team B', players: tb } };
+    }
+    
+    // Save squad
+    fetch('/api/squad', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode: 'multi', teams: state.teams}) });
+ 
+    state.scores = { 1: 0, 2: 0 };
+    undoHistory = []; // Reset undo
+    setupInning();
+}
+ 
+// --- SCORING ENGINE ---
+function setupInning() {
+    state.ballsBowled = 0;
+    state.currentScore = 0;
+    state.currentBatterIndex = 0;
+    if (isNoBallActive) toggleNoBall(); 
+ 
+    showView('scoring-view');
+ 
+    if (state.mode === 'multi') {
+        showBatterModal("Select Opening Batter");
+    } else {
+        updateScoreboard();
+        saveState();
+    }
+}
+ 
+function getActiveEntityName() {
+    if (state.mode === 'single') return state.players[state.currentInningIndex];
+    let team = state.teams[state.currentInningIndex + 1];
+    return `${team.name} (${team.players[state.currentBatterIndex]})`;
+}
+ 
+function recordPlayerStats(runs, isOut) {
+    let playerName = state.mode === 'single' 
+        ? state.players[state.currentInningIndex] 
+        : state.teams[state.currentInningIndex + 1].players[state.currentBatterIndex];
+        
+    if (!currentMatchStats[playerName]) {
+        currentMatchStats[playerName] = { runs: 0, outs: 0, matches: 1 };
+    }
+    currentMatchStats[playerName].runs += runs;
+    if (isOut) currentMatchStats[playerName].outs += 1;
+}
+ 
+function checkWinCondition() {
+    if (state.mode === 'multi' && state.currentInningIndex === 1) {
+        return state.currentScore > state.scores[1]; 
+    } else if (state.mode === 'single' && state.currentInningIndex === state.players.length - 1) {
+        let highestScore = Math.max(...state.players.slice(0, state.currentInningIndex).map(p => state.scores[p]));
+        return state.currentScore > highestScore; 
+    }
+    return false;
+}
+ 
+function updateScoreboard() {
+    document.getElementById('current-batter').innerText = `Batting: ${getActiveEntityName()}`;
+    document.getElementById('current-score').innerText = state.currentScore;
+    
+    let overs = Math.floor(state.ballsBowled / 6);
+    let balls = state.ballsBowled % 6;
+    document.getElementById('overs-info').innerText = `Overs: ${overs}.${balls} / ${state.overs}`;
+    
+    let targetText = "-";
+    if (state.mode === 'single' && state.currentInningIndex > 0) {
+        let completedScores = state.players.slice(0, state.currentInningIndex).map(p => state.scores[p]);
+        completedScores.sort((a, b) => a - b);
+        let nextTarget = null;
+        for (let s of completedScores) {
+            if (state.currentScore <= s) { nextTarget = s + 1; break; }
+        }
+        targetText = nextTarget !== null ? nextTarget.toString() : "Leading!";
+    } else if (state.mode === 'multi' && state.currentInningIndex === 1) {
+        targetText = (state.scores[1] + 1).toString();
+    }
+    document.getElementById('target-info').innerText = `Target: ${targetText}`;
+}
+ 
+// Modals
+function showBatterModal(title = "Select Next Batter") {
+    if (checkWinCondition() || state.ballsBowled >= (state.overs * 6)) {
+        checkInningStatus();
+        return;
+    }
+    document.getElementById('modal-title').innerText = title;
+    let teamPlayers = state.teams[state.currentInningIndex + 1].players;
+    let select = document.getElementById('batter-select');
+    select.innerHTML = '';
+    
+    teamPlayers.forEach((p, idx) => {
+        let opt = document.createElement('option');
+        opt.value = idx; opt.innerText = p;
+        if (idx === state.currentBatterIndex) opt.selected = true;
+        select.appendChild(opt);
+    });
+    document.getElementById('batter-modal').classList.add('active');
+}
+ 
+function confirmBatter() {
+    state.currentBatterIndex = parseInt(document.getElementById('batter-select').value);
+    document.getElementById('batter-modal').classList.remove('active');
+    updateScoreboard(); saveState(); checkInningStatus(); 
+}
+ 
+// Game Actions
+function toggleNoBall() {
+    isNoBallActive = !isNoBallActive;
+    let nbBtn = document.getElementById('btn-noball');
+    if (isNoBallActive) {
+        nbBtn.classList.add('btn-active'); nbBtn.innerText = 'NB (On)';
+    } else {
+        nbBtn.classList.remove('btn-active'); nbBtn.innerText = 'NB';
+    }
+}
+ 
+function addScore(runs) {
+    pushUndoState(); // Save state before change
+    state.currentScore += runs;
+    recordPlayerStats(runs, false);
+    
+    if (isNoBallActive) toggleNoBall(); 
+    else state.ballsBowled++;
+    
+    checkInningStatus();
+}
+ 
+function handleOut() {
+    pushUndoState(); // Save state before change
+    recordPlayerStats(0, true);
+ 
+    if (state.outRule === 'deduct') {
+        state.currentScore -= 2;
+        if (isNoBallActive) toggleNoBall();
+        else state.ballsBowled++;
+        
+        if (state.mode === 'multi') {
+            showBatterModal("Wicket! Select Next Batter");
+        } else {
+            checkInningStatus();
+        }
+    } else if (state.outRule === 'out') {
+        if (isNoBallActive) toggleNoBall();
+        endInning();
+    }
+}
+ 
+function retireBatsman() {
+    pushUndoState();
+    if (state.mode === 'multi') {
+        showBatterModal("Retire: Select New Batsman");
+    } else {
+        // Single player: ends their turn without a -2 penalty.
+        if(confirm("Retire this player? Their inning will end without penalty.")) {
+            endInning();
+        }
+    }
+}
+ 
+function checkInningStatus() {
+    updateScoreboard();
+    saveState();
+    
+    if (checkWinCondition()) {
+        setTimeout(() => { alert("Target Reached! Match Over! 🏆"); endInning(true); }, 100);
+        return;
+    }
+    if (state.ballsBowled >= (state.overs * 6)) {
+        setTimeout(() => { endInning(); }, 100);
+    }
+}
+ 
+function endInning(isEarlyWin = false) {
+    undoHistory = []; // Reset undo stack on inning end
+    
+    if (state.mode === 'single') {
+        let pName = state.players[state.currentInningIndex];
+        state.scores[pName] = state.currentScore;
+        state.currentInningIndex++;
+        if (state.currentInningIndex >= state.players.length || isEarlyWin) return finishMatch();
+    } else {
+        state.scores[state.currentInningIndex + 1] = state.currentScore;
+        state.currentInningIndex++;
+        if (state.currentInningIndex >= 2 || isEarlyWin) return finishMatch();
+    }
+    alert("Innings Over! Ready for the next run.");
+    setupInning();
+}
+ 
+async function finishMatch() {
+    // Send match stats to backend
+    try {
+        await fetch('/api/stats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(currentMatchStats)
+        });
+    } catch(e) { console.error("Failed saving stats", e); }
+    
+    let board = document.getElementById('leaderboard');
+    board.innerHTML = '';
+    
+    if (state.mode === 'single') {
+        let sorted = Object.entries(state.scores).sort((a, b) => b[1] - a[1]);
+        board.innerHTML += `<h3>Winner: ${sorted[0][0]} 🏆</h3><ul>`;
+        sorted.forEach(s => board.innerHTML += `<li><span>${s[0]}</span> <span>${s[1]} runs</span></li>`);
+        board.innerHTML += `</ul>`;
+    } else {
+        let t1 = state.teams[1].name; let t2 = state.teams[2].name;
+        let s1 = state.scores[1]; let s2 = state.scores[2];
+        
+        if (s1 > s2) board.innerHTML = `<h3>${t1} Wins! 🏆</h3><p style="text-align:center;font-size:1.2rem;margin-top:10px">${s1} - ${s2}</p>`;
+        else if (s2 > s1) board.innerHTML = `<h3>${t2} Wins! 🏆</h3><p style="text-align:center;font-size:1.2rem;margin-top:10px">${s2} - ${s1}</p>`;
+        else board.innerHTML = `<h3>It's a Tie!</h3><p style="text-align:center;font-size:1.2rem;margin-top:10px">${s1} - ${s2}</p>`;
+    }
+    
+    showView('result-view');
+}
+ 
+async function resetMatch() {
+    try { await fetch('/api/match', { method: 'DELETE' }); } catch (e) { }
+    
+    // Clear temporary state
+    state = { mode: null, players: [], teams: {A:[], B:[]}, scores: {}, overs: 1, outRule: 'deduct', currentInningIndex: 0, currentBatterIndex: 0, ballsBowled: 0, currentScore: 0 };
+    tossWinnerData = { winnerName: null, teamA: [], teamB: [] }; 
+    currentMatchStats = {};
+    undoHistory = [];
+    
+    if (isNoBallActive) toggleNoBall();
+    document.querySelectorAll('.player-list').forEach(ul => ul.innerHTML = '');
+    showView('type-view');
+}

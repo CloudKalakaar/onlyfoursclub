@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>OnlyFours Club</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#00aff0">
+    <link rel="icon" type="image/png" href="icon-512.png">
+    <link rel="apple-touch-icon" href="icon-512.png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app-wrapper">
+    <div id="ptr-indicator" class="ptr-indicator">REFRESHING FEED...</div>
+
+    <!-- HEADER -->
+    <header>
+        <div class="brand-icon">
+            <img src="icon-512.png" alt="OnlyFours Club Logo" style="width:100%; height:100%; border-radius: 12px; object-fit: cover;">
+        </div>
+        <p class="brand-name">Only<span>Fours</span>Club</p>
+        <nav id="main-nav" class="top-nav" style="display:none">
+            <button class="nav-btn" onclick="showView('type-view')">New Match</button>
+            <button class="nav-btn" onclick="loadStats()">Leaderboard</button>
+        </nav>
+        <div id="logout-link" class="logout-btn" style="display:none" onclick="logout()">Sign Out</div>
+    </header>
+
+    <main>
+        <!-- LOGIN VIEW -->
+        <div id="login-view" class="view active">
+            <div class="card">
+                <h2>Member Login</h2>
+                <input type="text" id="username" class="input-field" placeholder="Member ID" autocomplete="off">
+                <input type="password" id="password" class="input-field" placeholder="Passkey">
+                <button class="btn btn-primary" onclick="login()">Access Club</button>
+                <p id="login-error" style="color:var(--danger); font-size: 0.8rem; text-align: center;"></p>
+            </div>
+        </div>
+
+        <!-- MODE SELECTION -->
+        <div id="type-view" class="view">
+            <h2>Select Experience</h2>
+            <div class="btn-stack">
+                <button class="btn btn-primary" onclick="showView('single-setup-view')">👤 Solo Session</button>
+                <button class="btn btn-secondary" onclick="showView('multi-setup-view')">👥 Group Battle</button>
+                <button class="btn btn-accent" onclick="showView('practice-setup-view')">🎯 Practice Drills</button>
+            </div>
+        </div>
+
+        <!-- SETUP VIEWS -->
+        <div id="single-setup-view" class="view">
+            <div class="card">
+                <h2>Solo Setup</h2>
+                <div class="add-row">
+                    <input type="text" id="sp-name" class="input-field" placeholder="Player Name">
+                    <button class="add-btn" onclick="addPlayer('sp-list','sp-name')">+</button>
+                </div>
+                <ul id="sp-list" class="player-list"></ul>
+                <label class="field-label">Duration (Overs)</label>
+                <input type="number" id="sp-overs" class="input-field" value="1" min="1">
+                <label class="field-label">Rule Set</label>
+                <select id="sp-rule" class="input-field">
+                    <option value="deduct">-2 Penalty</option>
+                    <option value="out">Innings Over</option>
+                </select>
+                <button class="btn btn-primary" onclick="startSinglePlayer()">Start Session</button>
+                <button class="btn btn-secondary" onclick="showView('type-view')">Back</button>
+            </div>
+        </div>
+
+        <div id="multi-setup-view" class="view">
+            <div class="card">
+                <h2>Team Battle Setup</h2>
+                <div class="field-label">Team 1 (Home)</div>
+                <div class="add-row">
+                    <input type="text" id="t1-name" class="input-field" placeholder="Player Name">
+                    <button class="add-btn" onclick="addPlayer('t1-list','t1-name')">+</button>
+                </div>
+                <ul id="t1-list" class="player-list"></ul>
+
+                <div class="field-label">Team 2 (Away)</div>
+                <div class="add-row">
+                    <input type="text" id="t2-name" class="input-field" placeholder="Player Name">
+                    <button class="add-btn" onclick="addPlayer('t2-list','t2-name')">+</button>
+                </div>
+                <ul id="t2-list" class="player-list"></ul>
+
+                <button class="btn btn-secondary" onclick="loadLastSquad()">♻️ Restore Previous</button>
+                <label class="field-label">Match Limit (Overs)</label>
+                <input type="number" id="mp-overs" class="input-field" value="1" min="1">
+                <button class="btn btn-primary" onclick="startMultiplayerToss()">Start Toss</button>
+                <button class="btn btn-secondary" onclick="showView('type-view')">Back</button>
+            </div>
+        </div>
+
+        <div id="practice-setup-view" class="view">
+            <div class="card">
+                <h2>Drill Setup</h2>
+                <div class="add-row">
+                    <input type="text" id="pr-name" class="input-field" placeholder="Add Player">
+                    <button class="add-btn" onclick="addPlayer('pr-list','pr-name')">+</button>
+                </div>
+                <ul id="pr-list" class="player-list"></ul>
+                <label class="field-label">Balls per Set</label>
+                <input type="number" id="pr-balls" class="input-field" value="30" min="1">
+                <button class="btn btn-primary" onclick="startPractice()">Start Drills</button>
+                <button class="btn btn-secondary" onclick="showView('type-view')">Back</button>
+            </div>
+        </div>
+
+        <!-- SCORING VIEWS -->
+        <div id="scoring-view" class="view">
+            <div class="scoreboard">
+                <div class="score-top-row">
+                    <span id="target-info" class="score-pill">TGT: --</span>
+                    <span id="overs-info" class="score-pill">0.0 / 1 OVR</span>
+                </div>
+                <div class="score-main">
+                    <span id="current-batter" class="player-tag">--</span>
+                    <div id="current-score" class="big-num">00</div>
+                    <span id="current-bowler" class="player-tag bowler-tag" onclick="showBowlerModal()" style="cursor:pointer">🎯 SET BOWLER</span>
+                </div>
+                <div class="util-row">
+                    <button class="util-btn" onclick="undoLastBall()">UNDO</button>
+                    <button class="util-btn" onclick="retireBatsman()">SWAP</button>
+                </div>
+            </div>
+            <div class="keypad">
+                <button class="key" onclick="addScore(0)">0</button>
+                <button class="key" onclick="addScore(1)">1</button>
+                <button class="key" onclick="addScore(2)">2</button>
+                <button class="key" onclick="addScore(3)">3</button>
+                <button class="key key-four" onclick="addScore(4)">4</button>
+                <button id="btn-noball" class="key" onclick="toggleNoBall()">NB</button>
+                <button class="key key-out" style="grid-column: span 3;" onclick="handleOut()">WICKET / OUT</button>
+            </div>
+        </div>
+
+        <div id="practice-view" class="view">
+            <div class="scoreboard">
+                <h1 id="pr-player-name">--</h1>
+                <div class="big-num" id="pr-ball-count">0</div>
+                <p id="pr-limit-text">of 30 balls</p>
+                <div style="width:100%; height:4px; background:rgba(255,255,255,0.1); border-radius:2px; margin-top:20px; overflow:hidden;">
+                    <div id="pr-progress" style="width:0%; height:100%; background:var(--primary); transition:width 0.3s;"></div>
+                </div>
+            </div>
+            <div class="keypad">
+                <button class="key" style="grid-column: span 3; height:100px; font-size: 2rem; background: var(--primary); color: #fff;" onclick="countBall()">COUNT BALL</button>
+                <button class="key" style="grid-column: span 3;" onclick="openPracticeModal()">Change Player</button>
+                <button class="key key-wide" style="grid-column: span 3; opacity:0.6;" onclick="finishPlayerSession()">Finish Player Session</button>
+            </div>
+        </div>
+
+        <!-- RESULTS & STATS -->
+        <div id="result-view" class="view">
+            <div class="card">
+                <h2>Session Over</h2>
+                <div id="match-scorecard"></div>
+                <button class="btn btn-primary" onclick="resetMatch()">New Session</button>
+            </div>
+        </div>
+
+        <div id="stats-view" class="view">
+            <div class="card">
+                <h2>Club Records</h2>
+                <div id="stats-body"></div>
+                <button class="btn btn-danger" style="margin-top:20px" onclick="clearStats()">Clear Records</button>
+            </div>
+        </div>
+    </main>
+</div>
+
+<!-- MODALS -->
+<div id="toss-modal" class="modal-overlay">
+    <div class="modal-body">
+        <h3 id="toss-title" class="modal-title">TOSSING...</h3>
+        <div class="toss-display">
+            <div id="toss-shuffler" class="shuffler-box">READY</div>
+        </div>
+        <div id="toss-choices" style="display:none">
+            <p id="toss-result-text" style="margin-bottom:15px; font-weight:700;"></p>
+            <div class="btn-stack">
+                <button class="btn btn-primary" onclick="setTossChoice('bat')">Bat First</button>
+                <button class="btn btn-secondary" onclick="setTossChoice('bowl')">Bowl First</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="batter-modal" class="modal-overlay">
+    <div class="modal-body">
+        <h2 id="modal-title">Next Batter</h2>
+        <select id="batter-select" class="input-field"></select>
+        <button class="btn btn-primary" onclick="confirmBatter()">Confirm</button>
+    </div>
+</div>
+
+<div id="bowler-modal" class="modal-overlay">
+    <div class="modal-body">
+        <h2>Set Bowler</h2>
+        <select id="bowler-select" class="input-field"></select>
+        <button class="btn btn-primary" onclick="confirmBowler()">Confirm</button>
+    </div>
+</div>
+
+<div id="practice-player-modal" class="modal-overlay">
+    <div class="modal-body">
+        <h2>Select Player</h2>
+        <select id="practice-player-select" class="input-field"></select>
+        <button class="btn btn-primary" onclick="confirmPracticePlayer()">Confirm</button>
+        <button class="btn btn-secondary" onclick="closeAllModals()">Cancel</button>
+    </div>
+</div>
+
+<div id="anim-four" class="anim-event"><span class="anim-four-text">FOUR!</span></div>
+<div id="anim-out" class="anim-event"><span class="anim-out-text">OUT</span></div>
+
+<script src="script.js"></script>
+</body>
+</html>
