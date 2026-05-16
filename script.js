@@ -756,7 +756,7 @@ function updatePracticeUI() {
 
 // ===== PULL TO REFRESH LOGIC =====
 let touchStartY = 0;
-const PTR_THRESHOLD = 150;
+const PTR_THRESHOLD = 180;
 
 window.addEventListener('touchstart', (e) => {
     if (window.scrollY === 0) touchStartY = e.touches[0].clientY;
@@ -767,9 +767,13 @@ window.addEventListener('touchmove', (e) => {
     const diff = touchY - touchStartY;
     if (window.scrollY === 0 && diff > 50) {
         document.body.classList.add('ptr-active');
+        const indicator = document.getElementById('ptr-indicator');
         if (diff > PTR_THRESHOLD) {
-            document.getElementById('ptr-indicator').innerText = "RELEASE TO REFRESH";
-            document.getElementById('ptr-indicator').style.color = "var(--accent)";
+            indicator.innerText = "RELEASE TO UPDATE APP";
+            indicator.style.color = "var(--accent)";
+        } else {
+            indicator.innerText = "PULL TO REFRESH...";
+            indicator.style.color = "#fff";
         }
     }
 }, { passive: true });
@@ -778,16 +782,18 @@ window.addEventListener('touchend', (e) => {
     const touchEndY = e.changedTouches[0].clientY;
     const diff = touchEndY - touchStartY;
     if (window.scrollY === 0 && diff > PTR_THRESHOLD) {
-        location.reload(true);
+        // Force a cache-busting reload to get latest GitHub push
+        const baseUrl = window.location.origin + window.location.pathname;
+        window.location.href = baseUrl + "?v=" + Date.now();
     } else {
         document.body.classList.remove('ptr-active');
-        document.getElementById('ptr-indicator').innerText = "REFRESHING FEED...";
-        document.getElementById('ptr-indicator').style.color = "var(--primary)";
     }
     touchStartY = 0;
 });
 
 function logout() {
+    if (!confirm('Log out?')) return;
     removeSession(KEYS.AUTH);
-    location.reload();
+    const baseUrl = window.location.origin + window.location.pathname;
+    window.location.href = baseUrl + "?v=" + Date.now();
 }
